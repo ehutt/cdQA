@@ -36,9 +36,9 @@ from tqdm.autonotebook import tqdm, trange
 
 from transformers import PYTORCH_PRETRAINED_BERT_CACHE, WEIGHTS_NAME, CONFIG_NAME
 
-from transformers import BertForQuestionAnswering, DistilBertForQuestionAnswering
-from transformers import BertConfig, DistilBertConfig
-from transformers import BertTokenizer, DistilBertTokenizer
+from transformers import BertForQuestionAnswering, DistilBertForQuestionAnswering, AutoModelForQuestionAnswering
+from transformers import BertConfig, DistilBertConfig, AutoConfig
+from transformers import BertTokenizer, DistilBertTokenizer, AutoTokenizer
 from transformers import AdamW
 from transformers.tokenization_bert import BasicTokenizer, whitespace_tokenize
 
@@ -984,17 +984,17 @@ class BertProcessor(BaseEstimator, TransformerMixin):
     Examples
     --------
     >>> from cdqa.reader import BertProcessor
-    >>> processor = BertProcessor(bert_model='bert-base-uncased', do_lower_case=True, is_training=False)
+    >>> processor = BertProcessor(model='bert-base-uncased', do_lower_case=True, is_training=False)
     >>> examples, features = processor.fit_transform(X=squad_examples)
 
     """
 
     def __init__(
         self,
-        bert_model="bert-base-uncased",
+        model="bert-base-uncased",
         do_lower_case=True,
         is_training=False,
-        version_2_with_negative=False,
+        version_2_with_negative=True,
         max_seq_length=384,
         doc_stride=128,
         max_query_length=64,
@@ -1002,7 +1002,7 @@ class BertProcessor(BaseEstimator, TransformerMixin):
         tokenizer=None,
     ):
 
-        self.bert_model = bert_model
+        self.model = model
         self.do_lower_case = do_lower_case
         self.is_training = is_training
         self.version_2_with_negative = version_2_with_negative
@@ -1011,13 +1011,13 @@ class BertProcessor(BaseEstimator, TransformerMixin):
         self.max_query_length = max_query_length
         self.verbose = verbose
 
-        if tokenizer is None:
-            self.tokenizer = BertTokenizer.from_pretrained(
-                self.bert_model, do_lower_case=self.do_lower_case
-            )
-        else:
-            self.tokenizer = tokenizer
-            logger.info("loading custom tokenizer")
+
+        #EHUTT-change from Bert to Auto tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model, do_lower_case=self.do_lower_case
+        )
+
+
 
     def fit(self, X, y=None):
         return self
@@ -1048,10 +1048,8 @@ class BertQA(BaseEstimator):
 
     Parameters
     ----------
-    bert_model : str
-        Bert pre-trained model selected in the list: bert-base-uncased,
-        bert-large-uncased, bert-base-cased, bert-large-cased, bert-base-multilingual-uncased,
-        bert-base-multilingual-cased, bert-base-chinese.
+    model : str
+        hugging face model name.
     train_batch_size : int, optional
         Total batch size for training. (the default is 32)
     predict_batch_size : int, optional
@@ -1093,7 +1091,7 @@ class BertQA(BaseEstimator):
         0 (default value): dynamic loss scaling.
         Positive power of 2: static loss scaling value. (the default is 0)
     version_2_with_negative : bool, optional
-        If true, the SQuAD examples contain some that do not have an answer. (the default is False)
+        If true, the SQuAD examples contain some that do not have an answer. (the default is True)
     null_score_diff_threshold : float, optional
         If null_score - best_non_null is greater than the threshold predict null. (the default is 0.0)
     output_dir : str, optional
@@ -1117,7 +1115,7 @@ class BertQA(BaseEstimator):
     Examples
     --------
     >>> from cdqa.reader import BertQA
-    >>> model = BertQA(bert_model='bert-base-uncased',
+    >>> model = BertQA(model='bert-base-uncased',
                 train_batch_size=12,
                 learning_rate=3e-5,
                 num_train_epochs=2,
@@ -1131,7 +1129,7 @@ class BertQA(BaseEstimator):
 
     def __init__(
         self,
-        bert_model="bert-base-uncased",
+        model="bert-base-uncased",
         train_batch_size=32,
         predict_batch_size=8,
         learning_rate=5e-5,
@@ -1149,14 +1147,14 @@ class BertQA(BaseEstimator):
         local_rank=-1,
         fp16=False,
         loss_scale=0,
-        version_2_with_negative=False,
+        version_2_with_negative=True, #EHUTT-change default to squadv2
         null_score_diff_threshold=0.0,
         output_dir=None,
         server_ip="",
         server_port="",
     ):
 
-        self.bert_model = bert_model
+        self.model = model
         self.train_batch_size = train_batch_size
         self.predict_batch_size = predict_batch_size
         self.learning_rate = learning_rate
@@ -1181,13 +1179,16 @@ class BertQA(BaseEstimator):
         self.server_port = server_port
 
         # Prepare model
-        self.model = BertForQuestionAnswering.from_pretrained(
-            self.bert_model,
-            cache_dir=os.path.join(
-                str(PYTORCH_PRETRAINED_BERT_CACHE),
-                "distributed_{}".format(self.local_rank),
-            ),
-        )
+        #EHUTT- change from Bert to Auto qa model
+        self.model = AutoModelForQuestionAnswering.from_pretrained(self.model)
+        #EHUTT- removed cache in model instantiation
+        # self.model = AutoModelForQuestionAnswering.from_pretrained(
+        #     self.model,
+        #     cache_dir=os.path.join(
+        #         str(PYTORCH_PRETRAINED_BERT_CACHE),
+        #         "distributed_{}".format(self.local_rank),
+        #     ),
+        # )
 
         if self.server_ip and self.server_port:
             # Distant debugging - see https://code.visualstudio.com/docs/python/debugging#_attach-to-a-local-script
@@ -1383,7 +1384,7 @@ class BertQA(BaseEstimator):
                           'attention_mask':  batch[1],
                           'start_positions': batch[3],
                           'end_positions':   batch[4]}
-                if 'distilbert' not in self.bert_model:
+                if 'distilbert' not in self.model:
                     inputs['token_type_ids'] = batch[2]
                 outputs = self.model(**inputs)
                 loss = outputs[0]
@@ -1464,7 +1465,7 @@ class BertQA(BaseEstimator):
                 inputs = {'input_ids':      batch[0],
                           'attention_mask': batch[1]
                           }
-                if 'distilbert' not in self.bert_model:
+                if 'distilbert' not in self.model:
                     inputs['token_type_ids'] = batch[2]
                 example_indices = batch[3]
                 batch_start_logits, batch_end_logits = self.model(**inputs)
