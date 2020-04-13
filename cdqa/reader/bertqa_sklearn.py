@@ -1153,7 +1153,6 @@ class BertQA(BaseEstimator):
         server_ip="",
         server_port="",
     ):
-
         self.model = model
         self.train_batch_size = train_batch_size
         self.predict_batch_size = predict_batch_size
@@ -1465,7 +1464,7 @@ class BertQA(BaseEstimator):
                 inputs = {'input_ids':      batch[0],
                           'attention_mask': batch[1]
                           }
-                if 'distilbert' not in self.model:
+                if 'distilbert' not in self.model._get_name().lower():
                     inputs['token_type_ids'] = batch[2]
                 example_indices = batch[3]
                 batch_start_logits, batch_end_logits = self.model(**inputs)
