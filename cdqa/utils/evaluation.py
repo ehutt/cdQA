@@ -9,6 +9,7 @@ import tqdm
 import json
 import sys
 import os
+import time
 
 import joblib
 from tqdm.autonotebook import tqdm
@@ -106,8 +107,8 @@ def evaluate(dataset, predictions, unique_pred=True):
 
     return {"exact_match": exact_match, "f1": f1}
 
-
-def evaluate_reader(cdqa_pipeline, dataset_file, expected_version="1.1"):
+# EHUTT: changed default expected_version to 2.0
+def evaluate_reader(cdqa_pipeline, dataset_file, expected_version="2.0"):
     """Evaluation for SQuAD
 
     Parameters
@@ -117,7 +118,7 @@ def evaluate_reader(cdqa_pipeline, dataset_file, expected_version="1.1"):
     dataset_file : str
         path to json file in SQuAD format
     expected_version : str, optional
-        [description], by default '1.1'
+        [description], by default '2.0'
 
     Returns
     -------
@@ -126,14 +127,16 @@ def evaluate_reader(cdqa_pipeline, dataset_file, expected_version="1.1"):
 
     with open(dataset_file, "r") as dataset_file:
         dataset_json = json.load(dataset_file)
-        if dataset_json["version"] != expected_version:
-            print(
-                "Evaluation expects v-"
-                + expected_version
-                + ", but got dataset with v-"
-                + dataset_json["version"],
-                file=sys.stderr,
-            )
+
+        # EHUTT: remove test for dataset version
+        # if dataset_json["version"] != expected_version:
+        #     print(
+        #         "Evaluation expects v-"
+        #         + expected_version
+        #         + ", but got dataset with v-"
+        #         + dataset_json["version"],
+        #         file=sys.stderr,
+        #     )
         dataset = dataset_json["data"]
 
     if torch.cuda.is_available():
@@ -141,10 +144,16 @@ def evaluate_reader(cdqa_pipeline, dataset_file, expected_version="1.1"):
     reader = cdqa_pipeline.reader
     processor = cdqa_pipeline.processor_predict
     examples, features = processor.fit_transform(dataset)
+    # EHUTT: adding inference time measure
+    inference_time = 0
+    start_time = time.time()
     preds = reader.predict((examples, features), return_all_preds=True)
+    inference_time += time.time() - start_time
     all_predictions = {d['qas_id']: d['text'] for d in preds}
-
-    return evaluate(dataset, all_predictions)
+    results = evaluate(dataset, all_predictions)
+    results['avg_inference_time'] = inference_time / len(examples)
+    results['num_examples'] = len(examples)
+    return results
 
 
 def evaluate_pipeline(
@@ -187,13 +196,15 @@ def evaluate_pipeline(
         data_dict = json.load(file)
 
     queries = _get_queries_list(data_dict)
-    all_predictions = _pipeline_predictions(cdqa_pipeline, queries, n_predictions)
+    all_predictions, avg_inference_time = _pipeline_predictions(cdqa_pipeline, queries, n_predictions)
     if output_dir is not None:
         with open(preds_path, "w") as f:
             json.dump(all_predictions, f)
 
     unique_pred = n_predictions is None
     results = evaluate(data_dict["data"], all_predictions, unique_pred)
+    results['avg_inference_time'] = avg_inference_time
+    results['num_examples'] = len(queries)
     if output_dir is not None:
         with open(results_path, "w") as f:
             json.dump(results, f)
@@ -222,10 +233,16 @@ def _get_queries_list(data_dict):
 def _pipeline_predictions(cdqa_pipeline, queries, n_predictions=None):
 
     all_predictions = dict()
+    inference_time = 0
+    i = 0
     for id, query in tqdm(queries):
+        i += 1
+        start_time = time.time()
         if n_predictions is None:
             all_predictions[id] = cdqa_pipeline.predict(query)[0]
         else:
             preds = cdqa_pipeline.predict(query, n_predictions=n_predictions)
             all_predictions[id] = [pred[0] for pred in preds]
-    return all_predictions
+        inference_time += (time.time() - start_time)
+    avg_inference_time = inference_time / i
+    return all_predictions, avg_inference_time

@@ -8,5 +8,6 @@ scikit_learn==0.21.2
 tika==1.19
 torch==1.2.0
 markdown==3.1.1
-tqdm==4.32.2
+#tqdm==4.32.2
+tqdm==4.45.0
 wget==3.2
